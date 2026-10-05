@@ -333,8 +333,26 @@
     }
 
     /* 2. MAP VIEW */
-    #view-map { position: relative; flex: 1; height: 100%; display: flex; }
-    #map-canvas { flex: 1; height: 100%; position: relative; background: #080d16; }
+    #view-map {
+      position: relative;
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      min-height: 500px;
+      display: none;
+      flex-direction: column;
+    }
+    #view-map.active {
+      display: flex !important;
+    }
+    #map-canvas {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      min-height: 500px;
+      position: relative;
+      background: #080d16;
+    }
 
     .map-top-toolbar {
       position: absolute;
@@ -1167,9 +1185,10 @@
       <div class="map-top-toolbar">
         <!-- Map Layer Selector -->
         <select id="map-layer-selector" onchange="changeMapBaseLayer(this.value)" style="border-color:#38bdf8; font-weight:700;">
+          <option value="osm" selected>🌍 OpenStreetMap (Estándar Rápido)</option>
+          <option value="carto">🗺️ CartoDB Voyager (GPS Operativo)</option>
           <option value="google_road">🗺️ Google Maps (Estándar GPS)</option>
           <option value="google_hybrid">🛰️ Google Earth (Satelital)</option>
-          <option value="osm">🌍 OpenStreetMap Oficial</option>
         </select>
 
         <select id="map-sys-filter" onchange="renderMapPins()">
@@ -1557,6 +1576,61 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
       }
     };
 
+    // ========================================================
+    // CORE APPLICATION STATE & GLOBAL VARIABLES
+    // ========================================================
+    let currentUserRole = 'visita';
+    try {
+      const savedRole = localStorage.getItem('cctv_user_role');
+      if (savedRole && (savedRole === 'admin' || savedRole === 'operador' || savedRole === 'visita')) {
+        currentUserRole = savedRole;
+      }
+    } catch(e) {}
+    let tempSelectedRole = currentUserRole;
+
+    let map = null;
+    let baseTileLayer = null;
+    let markersLayer = null;
+    let fovLayer = null;
+    let currentCam = null;
+    let highlightedCamId = null;
+    let isAddCamActive = false;
+    let showFov = true;
+    let chartDoughnutInstance = null;
+    let chartBarsInstance = null;
+    let currentDashboardSector = 'ALL';
+
+    // Custom Plugin to display numbers above bars in Chart.js
+    const barValuesPlugin = {
+      id: 'barValuesPlugin',
+      afterDatasetsDraw(chart, args, options) {
+        try {
+          const { ctx } = chart;
+          if (!ctx || !chart.data || !chart.data.datasets) return;
+          chart.data.datasets.forEach((dataset, datasetIndex) => {
+            const meta = chart.getDatasetMeta(datasetIndex);
+            if (!meta || meta.hidden || !meta.data) return;
+            meta.data.forEach((element, index) => {
+              if (!element || typeof element.x !== 'number' || typeof element.y !== 'number' || isNaN(element.x) || isNaN(element.y)) return;
+              const val = dataset.data[index];
+              if (val === undefined || val === null) return;
+              ctx.save();
+              ctx.fillStyle = '#f8fafc';
+              ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'bottom';
+              ctx.fillText(String(val), element.x, element.y - 4);
+              ctx.restore();
+            });
+          });
+        } catch (err) {
+          console.warn('Bar values plugin render notice:', err);
+        }
+      }
+    };
+
+
+
     
     // ========================================================
     // BIDIRECTIONAL GOOGLE SHEETS SYNCHRONIZATION ENGINE
@@ -1680,12 +1754,12 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
 
     window.addEventListener('DOMContentLoaded', () => {
       initClock();
-      initCharts();
-      initLeafletMap();
-      switchSheetTable('refineria');
-      updateRoleUI();
-      loadSavedTitles();
-      selectDashboardSector('ALL');
+      try { initCharts(); } catch(e) { console.error('initCharts error:', e); }
+      try { initLeafletMap(); } catch(e) { console.error('initLeafletMap error:', e); }
+      try { switchSheetTable('refineria'); } catch(e) { console.error('switchSheetTable error:', e); }
+      try { updateRoleUI(); } catch(e) { console.error('updateRoleUI error:', e); }
+      try { loadSavedTitles(); } catch(e) { console.error('loadSavedTitles error:', e); }
+      try { selectDashboardSector('ALL'); } catch(e) { console.error('selectDashboardSector error:', e); }
     });
 
     function initClock() {
@@ -1701,33 +1775,53 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
       document.querySelectorAll('.panel-view').forEach(p => p.classList.remove('active'));
 
       if (tab === 'dashboard') {
-        document.querySelector('.nav-tabs .tab-btn:nth-child(1)').classList.add('active');
-        document.getElementById('view-dashboard').classList.add('active');
+        const btn = document.querySelector('.nav-tabs .tab-btn:nth-child(1)');
+        if (btn) btn.classList.add('active');
+        const view = document.getElementById('view-dashboard');
+        if (view) view.classList.add('active');
+        if (chartDoughnutInstance) chartDoughnutInstance.resize();
+        if (chartBarsInstance) chartBarsInstance.resize();
       } else if (tab === 'map') {
-        document.querySelector('.nav-tabs .tab-btn:nth-child(2)').classList.add('active');
-        document.getElementById('view-map').classList.add('active');
-        setTimeout(() => { if (map) map.invalidateSize(); }, 200);
+        const btn = document.querySelector('.nav-tabs .tab-btn:nth-child(2)');
+        if (btn) btn.classList.add('active');
+        const view = document.getElementById('view-map');
+        if (view) view.classList.add('active');
+        if (!map) {
+          initLeafletMap();
+        } else {
+          map.invalidateSize(true);
+        }
+        setTimeout(() => { if (map) map.invalidateSize(true); }, 60);
+        setTimeout(() => { if (map) map.invalidateSize(true); }, 250);
       } else if (tab === 'tables') {
-        document.querySelector('.nav-tabs .tab-btn:nth-child(3)').classList.add('active');
-        document.getElementById('view-tables').classList.add('active');
+        const btn = document.querySelector('.nav-tabs .tab-btn:nth-child(3)');
+        if (btn) btn.classList.add('active');
+        const view = document.getElementById('view-tables');
+        if (view) view.classList.add('active');
       } else if (tab === 'indoor') {
-        document.querySelector('.nav-tabs .tab-btn:nth-child(4)').classList.add('active');
-        document.getElementById('view-indoor').classList.add('active');
+        const btn = document.querySelector('.nav-tabs .tab-btn:nth-child(4)');
+        if (btn) btn.classList.add('active');
+        const view = document.getElementById('view-indoor');
+        if (view) view.classList.add('active');
         renderFloorPlan('ED1');
       }
     }
 
     // ==========================================
-    // MAP TILES FIX: REAL GOOGLE MAPS
+    // MAP TILES FIX: GUARANTEED RELIABLE MAP
     // ==========================================
     function initLeafletMap() {
+      if (map) return;
+      const mapCanvas = document.getElementById('map-canvas');
+      if (!mapCanvas) return;
+
       map = L.map('map-canvas', { zoomControl: false }).setView([-4.5775, -81.2785], 15);
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-      // Google Maps Standard Roadmap (Official Google servers, fast, NO API KEY)
-      baseTileLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
-        maxZoom: 20,
-        subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+      // Default reliable tile layer: OpenStreetMap (never blocked on HTTPS / Netlify)
+      baseTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
       }).addTo(map);
 
       fovLayer = L.layerGroup().addTo(map);
@@ -1745,6 +1839,7 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
     }
 
     function changeMapBaseLayer(layerKey) {
+      if (!map) return;
       if (baseTileLayer) map.removeLayer(baseTileLayer);
 
       if (layerKey === 'google_road') {
@@ -1757,9 +1852,15 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
           maxZoom: 20,
           subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
         }).addTo(map);
+      } else if (layerKey === 'carto') {
+        baseTileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+          maxZoom: 19,
+          attribution: '© CartoDB'
+        }).addTo(map);
       } else {
         baseTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          maxZoom: 19
+          maxZoom: 19,
+          attribution: '© OpenStreetMap contributors'
         }).addTo(map);
       }
     }
@@ -1783,29 +1884,27 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
       const data = sectorStats[sectorKey];
       if (!data) return;
 
-      document.getElementById('scope-active-name').textContent = data.title;
-      document.getElementById('scope-active-desc').textContent = `${data.subtitle} | Corte: ${data.corte_date}`;
+      const scopeNameEl = document.getElementById('scope-active-name');
+      if (scopeNameEl) scopeNameEl.textContent = data.title;
+      const scopeDescEl = document.getElementById('scope-active-desc');
+      if (scopeDescEl) scopeDescEl.textContent = `${data.subtitle} | Corte: ${data.corte_date}`;
 
-      document.getElementById('kpi-total').textContent = data.total;
-      document.getElementById('kpi-total-sub').textContent = (sectorKey === 'ALL' ? '100% Parque Instalado' : `${data.total} Cámaras en esta área`);
+      const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+      setTxt('kpi-total', data.total);
+      setTxt('kpi-total-sub', sectorKey === 'ALL' ? '100% Parque Instalado' : `${data.total} Cámaras en esta área`);
+      setTxt('kpi-op', data.op);
+      setTxt('kpi-op-sub', data.op_pct + ' Transmisión en vivo');
+      setTxt('kpi-mant', data.mant);
+      setTxt('kpi-mant-sub', data.mant_pct + ' Limpieza / Ajuste');
+      setTxt('kpi-off', data.off);
+      setTxt('kpi-off-sub', data.off_pct + ' Falla de enlace');
+      setTxt('kpi-desh', data.desh);
+      setTxt('kpi-desh-sub', data.desh_pct + ' Inactivas');
+      setTxt('kpi-disp', data.disp);
+      setTxt('kpi-disp-sub', data.disp_sub);
 
-      document.getElementById('kpi-op').textContent = data.op;
-      document.getElementById('kpi-op-sub').textContent = data.op_pct + ' Transmisión en vivo';
-
-      document.getElementById('kpi-mant').textContent = data.mant;
-      document.getElementById('kpi-mant-sub').textContent = data.mant_pct + ' Limpieza / Ajuste';
-
-      document.getElementById('kpi-off').textContent = data.off;
-      document.getElementById('kpi-off-sub').textContent = data.off_pct + ' Falla de enlace';
-
-      document.getElementById('kpi-desh').textContent = data.desh;
-      document.getElementById('kpi-desh-sub').textContent = data.desh_pct + ' Inactivas';
-
-      document.getElementById('kpi-disp').textContent = data.disp;
-      document.getElementById('kpi-disp-sub').textContent = data.disp_sub;
-
-      document.getElementById('chart-doughnut-title').textContent = `PROPORCIÓN DE ESTADOS (%) - ${data.title}`;
-      document.getElementById('chart-bars-title').textContent = `CANTIDAD POR ESTADO OPERATIVO - ${data.title}`;
+      setTxt('chart-doughnut-title', `PROPORCIÓN DE ESTADOS (%) - ${data.title}`);
+      setTxt('chart-bars-title', `CANTIDAD POR ESTADO OPERATIVO - ${data.title}`);
 
       if (chartDoughnutInstance) {
         chartDoughnutInstance.data.labels = [
@@ -1825,138 +1924,158 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
     }
 
     function initCharts() {
-      const dData = sectorStats['ALL'];
+      const dData = sectorStats['ALL'] || {
+        counts: [151, 65, 49, 12],
+        percentages: ["54.5%", "23.5%", "17.7%", "4.3%"]
+      };
 
-      // Doughnut (Strict fit, never overflows)
-      chartDoughnutInstance = new Chart(document.getElementById('chartDoughnut').getContext('2d'), {
-        type: 'doughnut',
-        data: {
-          labels: [
-            `Operativas (${dData.percentages[0]})`,
-            `Por Mantenimiento (${dData.percentages[1]})`,
-            `Sin Conexión (${dData.percentages[2]})`,
-            `Deshabilitadas (${dData.percentages[3]})`
-          ],
-          datasets: [{
-            data: dData.counts,
-            backgroundColor: [
-              '#10b981', // Verde
-              '#f59e0b', // Anaranjado medio amarillo
-              '#ef4444', // Rojo
-              '#1e293b'  // Negra / gris oscuro
+      const doughnutEl = document.getElementById('chartDoughnut');
+      if (doughnutEl) {
+        chartDoughnutInstance = new Chart(doughnutEl.getContext('2d'), {
+          type: 'doughnut',
+          data: {
+            labels: [
+              `Operativas (${dData.percentages[0]})`,
+              `Por Mantenimiento (${dData.percentages[1]})`,
+              `Sin Conexión (${dData.percentages[2]})`,
+              `Deshabilitadas (${dData.percentages[3]})`
             ],
-            borderColor: ['#047857', '#d97706', '#b91c1c', '#475569'],
-            borderWidth: 1.5
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          layout: { padding: { top: 10, bottom: 10, left: 10, right: 10 } },
-          plugins: {
-            legend: {
-              position: 'right',
-              labels: {
-                color: '#cbd5e1',
-                font: { size: 10, weight: '600' },
-                boxWidth: 12,
-                padding: 10
-              }
-            },
-            tooltip: {
-              callbacks: {
-                label: function(context) {
-                  const count = context.raw || 0;
-                  const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                  const pct = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
-                  return ` Cantidad: ${count} cámaras (${pct}%)`;
+            datasets: [{
+              data: dData.counts,
+              backgroundColor: [
+                '#10b981', // Verde
+                '#f59e0b', // Anaranjado medio amarillo
+                '#ef4444', // Rojo
+                '#475569'  // Gris azulado visible
+              ],
+              borderColor: ['#047857', '#d97706', '#b91c1c', '#64748b'],
+              borderWidth: 1.5
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 10, bottom: 10, left: 10, right: 10 } },
+            plugins: {
+              legend: {
+                position: 'right',
+                labels: {
+                  color: '#cbd5e1',
+                  font: { size: 10, weight: '600' },
+                  boxWidth: 12,
+                  padding: 10
+                }
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    const count = context.raw || 0;
+                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                    const pct = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
+                    return ` Cantidad: ${count} cámaras (${pct}%)`;
+                  }
                 }
               }
             }
           }
-        }
-      });
+        });
+      }
 
       // Bars (Strict fit, counts on top)
-      chartBarsInstance = new Chart(document.getElementById('chartBars').getContext('2d'), {
-        type: 'bar',
-        data: {
-          labels: ['Operativas', 'Por Mantenimiento', 'Sin Conexión', 'Deshabilitadas'],
-          datasets: [{
-            label: 'Cámaras',
-            data: dData.counts,
-            backgroundColor: [
-              '#00ff88', // Verde fosforescente
-              '#f59e0b', // Anaranjado medio amarillo
-              '#ef4444', // Rojo
-              '#0a111c'  // Negro
-            ],
-            borderColor: [
-              '#00cc6a',
-              '#d97706',
-              '#b91c1c',
-              '#64748b'
-            ],
-            borderWidth: 2,
-            borderRadius: 6
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          layout: { padding: { top: 22, bottom: 5, left: 10, right: 10 } },
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              callbacks: {
-                label: function(context) {
-                  return ` Cantidad: ${context.raw} cámaras`;
+      const barsEl = document.getElementById('chartBars');
+      if (barsEl) {
+        chartBarsInstance = new Chart(barsEl.getContext('2d'), {
+          type: 'bar',
+          data: {
+            labels: ['Operativas', 'Por Mantenimiento', 'Sin Conexión', 'Deshabilitadas'],
+            datasets: [{
+              label: 'Cámaras',
+              data: dData.counts,
+              backgroundColor: [
+                '#10b981', // Verde esmeralda brillante
+                '#f59e0b', // Ámbar / naranja
+                '#ef4444', // Rojo
+                '#64748b'  // Gris pizarra bien visible (NO NEGRO)
+              ],
+              borderColor: [
+                '#059669',
+                '#d97706',
+                '#dc2626',
+                '#94a3b8'
+              ],
+              borderWidth: 2,
+              borderRadius: 6
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 22, bottom: 5, left: 10, right: 10 } },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    return ` Cantidad: ${context.raw} cámaras`;
+                  }
                 }
+              }
+            },
+            scales: {
+              x: {
+                ticks: { color: '#cbd5e1', font: { size: 10.5, weight: '600' } },
+                grid: { display: false }
+              },
+              y: {
+                beginAtZero: true,
+                ticks: { color: '#94a3b8' },
+                grid: { color: 'rgba(255,255,255,0.05)' }
               }
             }
           },
-          scales: {
-            x: {
-              ticks: { color: '#cbd5e1', font: { size: 10.5, weight: '600' } },
-              grid: { display: false }
-            },
-            y: {
-              beginAtZero: true,
-              ticks: { color: '#94a3b8' },
-              grid: { color: 'rgba(255,255,255,0.05)' }
-            }
-          }
-        },
-        plugins: [barValuesPlugin]
-      });
+          plugins: [barValuesPlugin]
+        });
+      }
     }
 
     // ==========================================
     // AUTH MODAL & ROLES (DEFAULT VISITA)
     // ==========================================
     function openAuthModal() {
-      document.getElementById('auth-modal').style.display = 'flex';
-      pickRole(currentUserRole);
+      const modal = document.getElementById('auth-modal');
+      if (modal) modal.style.display = 'flex';
+      pickRole(currentUserRole || 'visita');
     }
     function closeAuthModal() {
-      document.getElementById('auth-modal').style.display = 'none';
+      const modal = document.getElementById('auth-modal');
+      if (modal) modal.style.display = 'none';
     }
 
     function pickRole(r) {
+      if (!r) r = 'visita';
       tempSelectedRole = r;
       document.querySelectorAll('.role-card').forEach(c => c.classList.remove('selected'));
-      document.getElementById('opt-role-' + r).classList.add('selected');
+      const card = document.getElementById('opt-role-' + r);
+      if (card) card.classList.add('selected');
     }
 
     function confirmRoleSwitch() {
-      currentUserRole = tempSelectedRole;
+      const targetRole = tempSelectedRole || 'visita';
+      currentUserRole = targetRole;
+      try {
+        localStorage.setItem('cctv_user_role', currentUserRole);
+      } catch(e) {}
+
       closeAuthModal();
       updateRoleUI();
       loadSavedTitles();
+
       if (currentUserRole === 'admin') {
-        alert('Modo Administrador Activo:\n- Puede editar títulos haciendo clic en ellos.\n- Puede arrastrar cámaras en el mapa.\n- Puede ajustar sliders de FOV y cargar situaciones.');
+        alert('👑 Modo Administrador Activo:\n- Permisos completos de gestión habilitados.\n- Puede editar títulos haciendo clic en ellos.\n- Puede mover cámaras, ajustar sliders y guardar cambios.');
+      } else if (currentUserRole === 'operador') {
+        alert('🛡️ Modo Operador CCTV Activo:\n- Monitoreo técnico operativo habilitado.');
       } else {
-        alert('Modo de Solo Lectura Activo (Visita / Operador).');
+        alert('👁️ Modo Visita Activo (Solo Lectura):\n- Modo consulta de estadísticas, mapas y tablas.');
       }
     }
 
@@ -1987,32 +2106,6 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
       } catch (e) {}
     }
 
-    function confirmRoleSwitch() {
-      const prevRole = currentUserRole;
-      const targetRole = tempSelectedRole;
-
-      if (prevRole === 'admin' && targetRole !== 'admin') {
-        const wantSave = confirm('¿Desea GUARDAR los cambios realizados antes de salir del modo Administrador?\n\n- Presione [Aceptar] para Guardar y cambiar a Visita.\n- Presione [Cancelar] para Descartar cambios y cambiar a Visita.');
-        if (wantSave) {
-          saveAdminChangesManual();
-        } else {
-          // reload saved state
-          cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || defaultMasterCameras;
-        }
-      }
-
-      currentUserRole = targetRole;
-      closeAuthModal();
-      updateRoleUI();
-      loadSavedTitles();
-      if (currentUserRole === 'admin') {
-        alert('👑 Modo Administrador Activo:\n- Edición de títulos y paneles habilitada.\n- Carga de KMZ, Excel y Guardar Cambios disponible.');
-      } else {
-        alert('👁️ Modo Visita Activo (Solo Lectura):\n- Las herramientas de carga, exportación y datos en vivo quedan ocultas.');
-      }
-    }
-
-    
     function updateRoleUI() {
       const isAdm = (currentUserRole === 'admin');
       document.body.classList.toggle('role-is-admin', isAdm);
@@ -2025,23 +2118,35 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
       const fovPanel = document.getElementById('admin-fov-panel');
       const adminDashBar = document.getElementById('admin-dash-bar');
 
-      badge.className = 'role-badge';
-      if (isAdm) {
-        badge.classList.add('role-admin');
-        icon.textContent = '👑';
-        text.textContent = 'ADMINISTRADOR';
-        if (addBtn) addBtn.classList.add('visible');
-        if (banner) banner.style.display = 'block';
-        if (fovPanel) fovPanel.classList.add('visible');
-        if (adminDashBar) adminDashBar.classList.add('visible');
-      } else {
-        badge.classList.add('role-visita');
-        icon.textContent = currentUserRole === 'operador' ? '🛡️' : '👁️';
-        text.textContent = currentUserRole === 'operador' ? 'OPERADOR CCTV' : 'VISITA (SOLO LECTURA)';
-        if (addBtn) addBtn.classList.remove('visible');
-        if (banner) banner.style.display = 'none';
-        if (fovPanel) fovPanel.classList.remove('visible');
-        if (adminDashBar) adminDashBar.classList.remove('visible');
+      if (badge) {
+        badge.className = 'role-badge';
+        if (isAdm) {
+          badge.classList.add('role-admin');
+          if (icon) icon.textContent = '👑';
+          if (text) text.textContent = 'ADMINISTRADOR';
+        } else if (currentUserRole === 'operador') {
+          badge.classList.add('role-visita');
+          if (icon) icon.textContent = '🛡️';
+          if (text) text.textContent = 'OPERADOR CCTV';
+        } else {
+          badge.classList.add('role-visita');
+          if (icon) icon.textContent = '👁️';
+          if (text) text.textContent = 'VISITA (SOLO LECTURA)';
+        }
+      }
+
+      if (addBtn) {
+        if (isAdm) addBtn.classList.add('visible');
+        else addBtn.classList.remove('visible');
+      }
+      if (banner) banner.style.display = isAdm ? 'block' : 'none';
+      if (fovPanel) {
+        if (isAdm) fovPanel.classList.add('visible');
+        else fovPanel.classList.remove('visible');
+      }
+      if (adminDashBar) {
+        if (isAdm) adminDashBar.classList.add('visible');
+        else adminDashBar.classList.remove('visible');
       }
 
       // Toggle contenteditable for titles
@@ -2054,9 +2159,12 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
         }
       });
 
-      if (markersLayer) renderMapPins();
+      try {
+        if (markersLayer && map) renderMapPins();
+      } catch (e) {
+        console.warn('renderMapPins in updateRoleUI notice:', e);
+      }
     }
-
 
     // Admin Layout Resize Controls
     function adjustLayoutScale(scaleKey) {
@@ -2072,7 +2180,6 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
       if (chartBarsInstance) chartBarsInstance.resize();
     }
 
-    // Admin Logo Customization (Petroperú & PROTSSA)
     function handleLogoClick(corpKey) {
       if (currentUserRole !== 'admin') return;
 
@@ -2564,9 +2671,22 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
     // ==========================================
     // 4. INDOOR FLOORPLANS
     // ==========================================
-    function renderFloorPlan(floorKey) {
+    function renderFloorPlan(floorKey, ev) {
       document.querySelectorAll('#view-indoor .sheet-btn').forEach(b => b.classList.remove('active'));
-      event.target.classList.add('active');
+      let clickedBtn = ev && ev.target ? ev.target : null;
+      if (!clickedBtn && typeof event !== 'undefined' && event && event.target) {
+        clickedBtn = event.target;
+      }
+      if (!clickedBtn) {
+        const btns = document.querySelectorAll('#view-indoor .sheet-btn');
+        if (floorKey === 'ED1' && btns[0]) clickedBtn = btns[0];
+        else if (floorKey === 'PISO1' && btns[1]) clickedBtn = btns[1];
+        else if (floorKey === 'PISO5' && btns[2]) clickedBtn = btns[2];
+        else if (floorKey === 'LAB' && btns[3]) clickedBtn = btns[3];
+      }
+      if (clickedBtn && clickedBtn.classList) {
+        clickedBtn.classList.add('active');
+      }
 
       const svg = document.getElementById('indoor-svg-canvas');
       let h = '';
