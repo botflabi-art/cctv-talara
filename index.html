@@ -2390,7 +2390,6 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
           toast.classList.remove('show');
         }, 3500);
       }
-    }:\n- Rumbo: ${currentCam.heading || 90}°\n- Apertura: ${currentCam.fov_angle || 75}°\n- Alcance: ${currentCam.range_m || 65} metros`);
     }
 
     function adminUpdateFov() {
@@ -2803,12 +2802,6 @@ let cameras = JSON.parse(localStorage.getItem('cctv_talara_cams_v7')) || kmzMatc
       if (confirm('¿Desea restaurar la base oficial de 277 cámaras con corte al 03 de Octubre de 2026?')) {
         cameras = defaultMasterCameras;
         localStorage.removeItem('cctv_talara_cams_v7');
-        selectDashboardSector('ALL');
-        renderMapPins();
-        closeKmzModal();
-        alert('Base oficial de 277 cámaras restaurada con éxito.');
-      }
-    }, "HONEYWELL_REF": {"system": "HONEYWELL", "sub_branch": "Refinería", "title": "HONEYWELL - REFINERÍA", "subtitle": "Unidades de Proceso, Perímetro Exterior y Muelles Marítimos", "corte_date": "03 de Octubre de 2026", "total": 111, "op": 20, "op_pct": "18.0%", "mant": 37, "mant_pct": "33.3%", "off": 46, "off_pct": "41.4%", "desh": 8, "desh_pct": "7.2%", "disp": "51.4%", "disp_sub": "57 cámaras visualizables (20 Op + 37 Mant)", "counts": [20, 37, 46, 8], "percentages": ["18.0%", "33.3%", "41.4%", "7.2%"]}, "HONEYWELL_ADM": {"system": "HONEYWELL", "sub_branch": "Edificio Administrativo y Laboratorio", "title": "HONEYWELL - EDIFICIO ADM & LAB", "subtitle": "Edificio Central (Pisos 1-6), Laboratorio Calidad y Data Center", "corte_date": "03 de Octubre de 2026", "total": 81, "op": 46, "op_pct": "56.8%", "mant": 28, "mant_pct": "34.6%", "off": 3, "off_pct": "3.7%", "desh": 4, "desh_pct": "4.9%", "disp": "91.4%", "disp_sub": "74 visualizables en vivo", "counts": [46, 28, 3, 4], "percentages": ["56.8%", "34.6%", "3.7%", "4.9%"]}, "PROTSSA_REF": {"system": "PROTSSA", "sub_branch": "Refinería", "title": "PROTSSA - REFINERÍA", "subtitle": "Seguridad Patrimonial, Garitas de Acceso, Residencial y Plantas", "corte_date": "03 de Octubre de 2026", "total": 69, "op": 69, "op_pct": "100.0%", "mant": 0, "mant_pct": "0.0%", "off": 0, "off_pct": "0.0%", "desh": 0, "desh_pct": "0.0%", "disp": "100.0%", "disp_sub": "69 cámaras visualizables (100% blindado)", "counts": [69, 0, 0, 0], "percentages": ["100.0%", "0.0%", "0.0%", "0.0%"]}, "PROTSSA_PORT": {"system": "PROTSSA", "sub_branch": "Terminal Portuario", "title": "PROTSSA - TERMINAL PORTUARIO", "subtitle": "Muelles de Carga Líquida MU1, Muelle Híbrido MU2 e Instalaciones Portuarias", "corte_date": "03 de Octubre de 2026", "total": 16, "op": 16, "op_pct": "100.0%", "mant": 0, "mant_pct": "0.0%", "off": 0, "off_pct": "0.0%", "desh": 0, "desh_pct": "0.0%", "disp": "100.0%", "disp_sub": "16 cámaras visualizables (100% blindado)", "counts": [16, 0, 0, 0], "percentages": ["100.0%", "0.0%", "0.0%", "0.0%"]}};
         selectDashboardSector('ALL');
         renderMapPins();
         closeKmzModal();
